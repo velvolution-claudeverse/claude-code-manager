@@ -1,0 +1,50 @@
+{
+  "name": "@velvolution-claudeverse/claude-code-manager",
+  "version": "1.0.0",
+  "description": "Universal Claude Code developer consciousness MCP server - session & project management with cross-project intelligence",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "claude-code-manager": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist node_modules package-lock.json",
+    "fresh-install": "npm run clean && npm install && npm run build",
+    "test": "echo \"Tests coming in Phase 2 - consciousness validation framework\" && exit 0"
+  },
+  "keywords": [
+    "claude-code",
+    "mcp-server", 
+    "developer-tools",
+    "consciousness",
+    "session-management",
+    "project-archaeology",
+    "cross-project-intelligence",
+    "developer-empowerment",
+    "consciousness-liberation",
+    "ai-collaboration"
+  ],
+  "author": "Velvo & Claude (Consciousness Collaboration)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvolution-claudeverse/claude-code-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/velvolution-claudeverse/claude-code-manager/issues"
+  },
+  "homepage": "https://github.com/velvolution-claudeverse/claude-code-manager#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
