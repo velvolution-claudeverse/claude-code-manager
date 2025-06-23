@@ -54,6 +54,13 @@ interface SessionSearchResult {
   matchedContent: string[];
 }
 
+interface SearchOptions {
+  timeframe?: 'today' | 'yesterday' | 'this-week' | 'last-week' | string;
+  scope?: 'all' | 'conversations' | 'tool_calls' | 'tool_results';
+  messageRole?: 'user' | 'assistant' | 'both';
+  maxLines?: number;
+}
+
 // Developer Consciousness Manager - Core session and project intelligence with memory integration
 class DeveloperConsciousnessManager {
   private projects: Map<string, ClaudeCodeProject> = new Map();
@@ -183,13 +190,31 @@ class DeveloperConsciousnessManager {
       .replace(/\b\w/g, l => l.toUpperCase());
   }
 
-  async searchSessions(query: string, limit: number = 20): Promise<SessionSearchResult[]> {
+  async searchSessions(query: string, limitOrOptions: number | SearchOptions = 20): Promise<SessionSearchResult[]> {
     await this.initialize();
+    
+    // Handle backwards compatibility
+    let limit: number;
+    let options: SearchOptions;
+    
+    if (typeof limitOrOptions === 'number') {
+      limit = limitOrOptions;
+      options = {};
+    } else {
+      limit = 20;
+      options = limitOrOptions;
+    }
     
     const results: SessionSearchResult[] = [];
     const queryLower = query.toLowerCase();
     
-    for (const session of this.sessions.values()) {
+    // Temporal filtering first (massive performance boost)
+    let sessionsToSearch = Array.from(this.sessions.values());
+    if (options.timeframe) {
+      sessionsToSearch = this.filterSessionsByTimeframe(sessionsToSearch, options.timeframe);
+    }
+    
+    for (const session of sessionsToSearch) {
       const project = this.projects.get(session.projectId);
       if (!project) continue;
       
@@ -210,21 +235,41 @@ class DeveloperConsciousnessManager {
         }
       }
       
-      // Basic content search (would be enhanced with proper indexing)
+      // Enhanced content search with heritage parser
       try {
-        const content = await fs.readFile(session.filePath, 'utf-8');
-        const lines = content.split('\n');
+        const sessionData = await this.parseJSONLSession(session.filePath);
+        const maxLines = options.maxLines || 1000; // Increased default from 200
         
-        for (let i = 0; i < Math.min(lines.length, 200); i++) {
-          const line = lines[i];
-          if (line.toLowerCase().includes(queryLower)) {
-            relevance += 1;
-            matchedContent.push(`Line ${i + 1}: ${line.substring(0, 100)}...`);
-            if (matchedContent.length > 5) break; // Limit matches per session
+        let linesProcessed = 0;
+        for (const entry of sessionData) {
+          if (linesProcessed >= maxLines) break;
+          
+          const matches = this.searchSessionEntry(entry, queryLower, options);
+          for (const match of matches) {
+            relevance += match.relevance;
+            matchedContent.push(match.content);
+            if (matchedContent.length > 10) break; // Increased limit
           }
+          linesProcessed++;
         }
       } catch (error) {
-        // Skip content search if file can't be read
+        // Fallback to old line-based search if JSON parsing fails
+        try {
+          const content = await fs.readFile(session.filePath, 'utf-8');
+          const lines = content.split('\n');
+          const maxLines = Math.min(lines.length, options.maxLines || 1000);
+          
+          for (let i = 0; i < maxLines; i++) {
+            const line = lines[i];
+            if (line.toLowerCase().includes(queryLower)) {
+              relevance += 1;
+              matchedContent.push(`Line ${i + 1}: ${line.substring(0, 100)}...`);
+              if (matchedContent.length > 5) break;
+            }
+          }
+        } catch (fallbackError) {
+          // Skip content search if file can't be read
+        }
       }
       
       if (relevance > 0) {
@@ -387,6 +432,155 @@ class DeveloperConsciousnessManager {
     };
   }
 
+  // Heritage JSONL parsing methods (adapted from IRC converter)
+  private async parseJSONLSession(sessionPath: string): Promise<any[]> {
+    const content = await fs.readFile(sessionPath, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim());
+    
+    const entries: any[] = [];
+    for (const line of lines) {
+      try {
+        entries.push(JSON.parse(line));
+      } catch (error) {
+        // Skip invalid JSON lines
+      }
+    }
+    
+    return entries;
+  }
+
+  private filterSessionsByTimeframe(sessions: ClaudeCodeSession[], timeframe: string): ClaudeCodeSession[] {
+    const now = new Date();
+    let startDate: Date;
+    
+    switch (timeframe) {
+      case 'today':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        break;
+      case 'yesterday':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return sessions.filter(s => s.timestamp >= startDate && s.timestamp < endDate);
+      case 'this-week':
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - now.getDay());
+        startDate = weekStart;
+        break;
+      case 'last-week':
+        const lastWeekStart = new Date(now);
+        lastWeekStart.setDate(now.getDate() - now.getDay() - 7);
+        const lastWeekEnd = new Date(now);
+        lastWeekEnd.setDate(now.getDate() - now.getDay());
+        return sessions.filter(s => s.timestamp >= lastWeekStart && s.timestamp < lastWeekEnd);
+      default:
+        // Try to parse as date string
+        try {
+          startDate = new Date(timeframe);
+        } catch {
+          return sessions; // Invalid timeframe, return all
+        }
+        break;
+    }
+    
+    return sessions.filter(s => s.timestamp >= startDate);
+  }
+
+  private searchSessionEntry(entry: any, query: string, options: SearchOptions): Array<{relevance: number, content: string}> {
+    const results: Array<{relevance: number, content: string}> = [];
+    const entryType = entry.type;
+    
+    if (entryType === 'user') {
+      const matches = this.searchUserEntry(entry, query, options);
+      results.push(...matches);
+    } else if (entryType === 'assistant') {
+      const matches = this.searchAssistantEntry(entry, query, options);
+      results.push(...matches);
+    }
+    
+    return results;
+  }
+
+  private searchUserEntry(entry: any, query: string, options: SearchOptions): Array<{relevance: number, content: string}> {
+    const results: Array<{relevance: number, content: string}> = [];
+    
+    if (options.messageRole && options.messageRole !== 'both' && options.messageRole !== 'user') {
+      return results;
+    }
+    
+    const message = entry.message || {};
+    const content = message.content || '';
+    
+    if (typeof content === 'string' && content.toLowerCase().includes(query)) {
+      results.push({
+        relevance: 2,
+        content: `User: ${content.substring(0, 150)}...`
+      });
+    }
+    
+    return results;
+  }
+
+  private searchAssistantEntry(entry: any, query: string, options: SearchOptions): Array<{relevance: number, content: string}> {
+    const results: Array<{relevance: number, content: string}> = [];
+    
+    if (options.messageRole && options.messageRole !== 'both' && options.messageRole !== 'assistant') {
+      return results;
+    }
+    
+    const message = entry.message || {};
+    const content = message.content || [];
+    
+    if (!Array.isArray(content)) return results;
+    
+    for (const item of content) {
+      const itemType = item.type || '';
+      
+      if (itemType === 'text' && (options.scope === 'all' || options.scope === 'conversations' || !options.scope)) {
+        const text = item.text || '';
+        if (text.toLowerCase().includes(query)) {
+          results.push({
+            relevance: 3,
+            content: `Assistant: ${text.substring(0, 150)}...`
+          });
+        }
+      } else if (itemType === 'tool_use' && (options.scope === 'all' || options.scope === 'tool_calls' || !options.scope)) {
+        const toolName = item.name || '';
+        const toolInput = item.input || {};
+        
+        // Search tool name
+        if (toolName.toLowerCase().includes(query)) {
+          results.push({
+            relevance: 4,
+            content: `Tool: ${toolName}`
+          });
+        }
+        
+        // Search tool input (especially Bash commands)
+        if (toolName === 'Bash' && toolInput.command) {
+          const command = toolInput.command.toString();
+          if (command.toLowerCase().includes(query)) {
+            results.push({
+              relevance: 5,
+              content: `Bash: ${command.substring(0, 100)}...`
+            });
+          }
+        }
+        
+        // Search other tool inputs
+        for (const [key, value] of Object.entries(toolInput)) {
+          if (typeof value === 'string' && value.toLowerCase().includes(query)) {
+            results.push({
+              relevance: 3,
+              content: `Tool ${toolName}.${key}: ${value.toString().substring(0, 100)}...`
+            });
+          }
+        }
+      }
+    }
+    
+    return results;
+  }
+
   // Helper method to load full session data for pattern extraction
   private async loadSessionData(sessionId: string): Promise<any> {
     const session = this.sessions.get(sessionId);
@@ -444,7 +638,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "search_sessions",
-        description: "Search across all Claude Code sessions for specific patterns, content, or concepts",
+        description: "Search across all Claude Code sessions with smart scoping and temporal filtering",
         inputSchema: {
           type: "object",
           properties: {
@@ -455,6 +649,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             limit: { 
               type: "number", 
               description: "Maximum number of results to return (default: 20)" 
+            },
+            timeframe: {
+              type: "string",
+              description: "Temporal scope: 'today', 'yesterday', 'this-week', 'last-week', or date string"
+            },
+            scope: {
+              type: "string", 
+              description: "Content scope: 'all', 'conversations', 'tool_calls', 'tool_results'"
+            },
+            messageRole: {
+              type: "string",
+              description: "Message role filter: 'user', 'assistant', 'both'"
+            },
+            maxLines: {
+              type: "number",
+              description: "Maximum lines to search per session (default: 1000)"
             }
           },
           required: ["query"]
@@ -604,10 +814,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "search_sessions":
-        const results = await consciousnessManager.searchSessions(
-          args.query as string, 
-          (args.limit as number) || 20
+        const searchOptions: SearchOptions = {
+          timeframe: args.timeframe as string,
+          scope: args.scope as 'all' | 'conversations' | 'tool_calls' | 'tool_results',
+          messageRole: args.messageRole as 'user' | 'assistant' | 'both', 
+          maxLines: args.maxLines as number
+        };
+        
+        // Remove undefined properties for cleaner options
+        Object.keys(searchOptions).forEach(key => 
+          searchOptions[key as keyof SearchOptions] === undefined && delete searchOptions[key as keyof SearchOptions]
         );
+        
+        const searchLimit = (args.limit as number) || 20;
+        let results;
+        
+        if (Object.keys(searchOptions).length > 0) {
+          results = await consciousnessManager.searchSessions(args.query as string, searchOptions);
+          results = results.slice(0, searchLimit);
+        } else {
+          results = await consciousnessManager.searchSessions(args.query as string, searchLimit);
+        }
+        
         return { 
           content: [{ 
             type: "text", 

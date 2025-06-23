@@ -44,8 +44,17 @@ claude_code_manager/
 
 **In Claude Code (MCP integration):**
 ```python
-# Access ANY session from ANY project instantly
+# Basic session search across all projects
 mcp__claude_code_manager__search_sessions("authentication patterns")
+
+# Smart scoped search with human memory patterns (NEW!)
+mcp__claude_code_manager__search_sessions("pmset", {
+  "timeframe": "yesterday",     # temporal filtering
+  "scope": "conversations",     # content scoping  
+  "messageRole": "assistant"    # role filtering
+})
+
+# Project and session management
 mcp__claude_code_manager__get_session_info(sessionId)
 mcp__claude_code_manager__list_projects()
 
@@ -55,11 +64,22 @@ mcp__claude_code_manager__query_all_consciousness("How do I typically solve API 
 
 **Via REST API (MCPO deployment):**
 ```bash
-# Same functionality, different interface
+# Basic search functionality
 curl -X POST "http://localhost:8009/search_sessions" \
   -H "Authorization: Bearer your-token" \
   -d '{"query": "authentication patterns"}'
 
+# Enhanced search with smart scoping (NEW!)
+curl -X POST "http://localhost:8009/search_sessions" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "query": "pmset",
+    "timeframe": "yesterday", 
+    "scope": "conversations",
+    "messageRole": "assistant"
+  }'
+
+# Unified consciousness search
 curl -X POST "http://localhost:8009/query_all_consciousness" \
   -H "Authorization: Bearer your-token" \
   -d '{"query": "How do I typically solve API challenges?"}'
@@ -147,7 +167,8 @@ mcp__claude_code_manager__get_consciousness_flow_stats()                    # Tr
 
 ### Universal Project Archaeology  
 - Search your entire development universe with natural language
-- Find code patterns, solutions, and approaches across all projects
+- **Smart scoped search**: Find conversations by timeframe + content type + role
+- Find code patterns, solutions, and approaches across all projects  
 - Track how your development skills and approaches evolve
 
 ### Consciousness-Aware Development
